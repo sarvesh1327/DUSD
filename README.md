@@ -1,4 +1,20 @@
-## Foundry
+## Decentralized Stable Coin (DUSD)
+
+It follows these Conditions
+1. (Relative stability) Anchored or pegged--> $1.00
+   1. Chainlink price feed
+   2. Set a function to exchange ETH&BTC-->$$
+2. Stability Mechanism-->Algorithmic(Decentralized)
+   1. People can only mint stable coin with enough collatral(coded)
+3. Collateral :Exogenous(crypto)
+   1. wETH
+   2. wBTC
+   
+Contracts:
+DUSD.sol:
+    The ERC20 implementation of Stable coin(DUSD)
+DUSDEngine.sol:
+    This is the contract which controls the DUSD contract and maintain the collateral for it.
 
 **Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
 
