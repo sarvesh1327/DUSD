@@ -58,6 +58,7 @@ contract DUSDEngine is ReentrancyGuard {
     error DUSDEngine__MintFailed();
     error DUSDEngine__TransferFailed();
     error DUSDEngine__HealthFactorNotBroken();
+    error DUSDEngine__HealthFactorNotImproved();
 
     //State Variables
     uint256 private constant ADDITIONAL_FEED_PRECISION = 1e10;
@@ -65,7 +66,7 @@ contract DUSDEngine is ReentrancyGuard {
     uint256 private constant LIQUIDATION_THRESHOLD = 50;
     uint256 private constant LIQUIDATION_PRECISION = 100;
     uint256 private constant MIN_HEALTH_FACTOR = 1e18;
-    uint256 private constant LIQUIDATION_BONUS=10;
+    uint256 private constant LIQUIDATION_BONUS = 10;
     DUSD private immutable i_DUSD;
     mapping(address token => address priceFeeds) private s_priceFeeds;
     mapping(address user => mapping(address token => uint256 amount)) private s_collateralDeposited;
@@ -75,7 +76,9 @@ contract DUSDEngine is ReentrancyGuard {
 
     //Events
     event CollateralDeposited(address indexed user, address indexed tokenCollateralAddress, uint256 indexed amount);
-    event CollateralRedeemed(address indexed user, address indexed tokenCollateralAddress, uint256 indexed amount);
+    event CollateralRedeemed(
+        address indexed from, address indexed to, address indexed tokenCollateralAddress, uint256 amount
+    );
 
     //Modifiers
 
@@ -152,12 +155,7 @@ contract DUSDEngine is ReentrancyGuard {
         isAllowedToken(tokenCollateralAddress)
         nonReentrant
     {
-        s_collateralDeposited[msg.sender][tokenCollateralAddress] -= amountCollateral;
-        emit CollateralRedeemed(msg.sender, tokenCollateralAddress, amountCollateral);
-        bool success = IERC20(tokenCollateralAddress).transfer(msg.sender, amountCollateral);
-        if (!success) {
-            revert DUSDEngine__TransferFailed();
-        }
+        _redeemCollateral(msg.sender, msg.sender, tokenCollateralAddress, amountCollateral);
         _revertIfHealthFactorIsBroken(msg.sender);
     }
 
@@ -172,7 +170,6 @@ contract DUSDEngine is ReentrancyGuard {
     {
         burnDUSD(amountDUSDToBurn);
         redeemCollateral(tokenCollateralAddress, amountCollateral);
-
     }
 
     /**
@@ -193,12 +190,7 @@ contract DUSDEngine is ReentrancyGuard {
      * @param amount Amount of DUSD user want to burn
      */
     function burnDUSD(uint256 amount) public moreThanZero(amount) {
-        s_amountMinted[msg.sender] -= amount;
-        bool success = i_DUSD.transferFrom(msg.sender, address(this), amount);
-        if (!success) {
-            revert DUSDEngine__TransferFailed();
-        }
-        i_DUSD.burn(amount);
+        _burnDUSD(msg.sender, msg.sender, amount);
         _revertIfHealthFactorIsBroken(msg.sender);
     }
 
@@ -212,25 +204,52 @@ contract DUSDEngine is ReentrancyGuard {
      * for this to work
      * Follows CEI
      */
-    function liquidate(address tokenCollateralAddress, address user, uint256 debtToRecover) 
-    external 
-    moreThanZero(debtToRecover)
-    isAllowedToken(tokenCollateralAddress)
-    nonReentrant
+    function liquidate(address tokenCollateralAddress, address user, uint256 debtToRecover)
+        external
+        moreThanZero(debtToRecover)
+        isAllowedToken(tokenCollateralAddress)
+        nonReentrant
     {
         uint256 startingUserHealthFactor = _healthFactor(user);
-        if(startingUserHealthFactor>=MIN_HEALTH_FACTOR){
+        if (startingUserHealthFactor >= MIN_HEALTH_FACTOR) {
             revert DUSDEngine__HealthFactorNotBroken();
         }
 
         uint256 tokenAmountFromDebtRecovered = getTokenAmountFromUsd(tokenCollateralAddress, debtToRecover);
-        uint256 bonusCollateral = (tokenAmountFromDebtRecovered*LIQUIDATION_BONUS)/LIQUIDATION_PRECISION;
-        uint256 totalCollateralToRedeem = tokenAmountFromDebtRecovered+bonusCollateral;
+        uint256 bonusCollateral = (tokenAmountFromDebtRecovered * LIQUIDATION_BONUS) / LIQUIDATION_PRECISION;
+        uint256 totalCollateralToRedeem = tokenAmountFromDebtRecovered + bonusCollateral;
+        _redeemCollateral(user, msg.sender, tokenCollateralAddress, totalCollateralToRedeem);
+        _burnDUSD(user, msg.sender, debtToRecover);
+        uint256 endingUserHealthFactor = _healthFactor(user);
+        if(endingUserHealthFactor<=startingUserHealthFactor){
+            revert DUSDEngine__HealthFactorNotImproved();
+        }
+        _revertIfHealthFactorIsBroken(msg.sender);
     }
 
     function getHealthFactor() external view {}
 
-    //Public functions
+    //////Private Functions
+
+    function _redeemCollateral(address from, address to, address tokenCollateralAddress, uint256 amountCollateral)
+        internal
+    {
+        s_collateralDeposited[from][tokenCollateralAddress] -= amountCollateral;
+        emit CollateralRedeemed(from, to, tokenCollateralAddress, amountCollateral);
+        bool success = IERC20(tokenCollateralAddress).transfer(to, amountCollateral);
+        if (!success) {
+            revert DUSDEngine__TransferFailed();
+        }
+    }
+
+    function _burnDUSD(address onBehalfOf, address dUSDfrom, uint256 amountDUSDToBurn) internal{
+        s_amountMinted[onBehalfOf] -= amountDUSDToBurn;
+        bool success = i_DUSD.transferFrom(dUSDfrom, address(this), amountDUSDToBurn);
+        if (!success) {
+            revert DUSDEngine__TransferFailed();
+        }
+        i_DUSD.burn(amountDUSDToBurn);
+    }
 
     /////Private and Internal View Functions
     /**
@@ -291,9 +310,17 @@ contract DUSDEngine is ReentrancyGuard {
         return ((uint256(price) * ADDITIONAL_FEED_PRECISION) * amount) / PRECISION;
     }
 
-    function getTokenAmountFromUsd(address tokenAddress, uint256 usdAmountInWei)public view returns(uint256){
-         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[tokenAddress]);
+    function getTokenAmountFromUsd(address tokenAddress, uint256 usdAmountInWei) public view returns (uint256) {
+        AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[tokenAddress]);
         (, int256 price,,,) = priceFeed.latestRoundData();
-        return (usdAmountInWei*PRECISION)/(uint256(price) * ADDITIONAL_FEED_PRECISION);
-    }   
+        return (usdAmountInWei * PRECISION) / (uint256(price) * ADDITIONAL_FEED_PRECISION);
+    }
+
+    function getCollateralAmount(address tokenCollateralAddress, address user) public view returns (uint256){
+        return s_collateralDeposited[user][tokenCollateralAddress];
+    }
+
+    function getAccountInformation(address user) external view returns(uint256 totalDUSDMinted, uint256 totalCollateralValue){
+       (totalDUSDMinted, totalCollateralValue)= _getAccountInformation(user);
+    }
 }

@@ -17,6 +17,7 @@ contract DUSDEngineTest is Test{
     HelperConfig public helperConfig;
     address weth;
     address ethToUsdPriceFeed;
+    address btcToUsdPriceFeed;
     address public USER = makeAddr("USER");
     uint256 public constant INITIAL_GAS = 1 ether;
     uint256 public constant AMOUNT_COLLATERAL = 10 ether;
@@ -25,9 +26,26 @@ contract DUSDEngineTest is Test{
     function setUp() public{
         deployer = new DeployDUSD();
        (dUSDtoken, dUSDEngine, helperConfig) = deployer.run();
-       (ethToUsdPriceFeed,,weth,,,) = helperConfig.activeNetworkConfig();
+       (ethToUsdPriceFeed,btcToUsdPriceFeed,weth,,,) = helperConfig.activeNetworkConfig();
        ERC20Mock(weth).mint(USER, STARTING_WETH_BALANCE);
        vm.deal(USER, INITIAL_GAS);
+    }
+
+
+      ////////////////////
+     //Constructor Test//
+    ////////////////////
+    
+    address [] tokenAddresses;
+    address [] priceFeedAddresses;
+    function testRevertIfTokenLengthDoesntMatchPriceFeedLength() public {
+        tokenAddresses.push(weth);
+        priceFeedAddresses.push(ethToUsdPriceFeed);
+        priceFeedAddresses.push(btcToUsdPriceFeed);
+
+        vm.expectRevert(DUSDEngine.DUSDEngine__TokenAddressedAndPriceFeedAddressesLengthMustBeSame.selector);
+        new DUSDEngine(tokenAddresses, priceFeedAddresses, address(dUSDtoken));
+
     }
 
 
@@ -42,6 +60,13 @@ contract DUSDEngineTest is Test{
         assertEq(expectedUsd,actualUsd);
     }
 
+    function testGetTokenAmountFromUsd() public view {
+        uint256 usdAmount = 100 ether;
+        uint256 expectedWeth = 0.05 ether;
+        uint256 actualWeth = dUSDEngine.getTokenAmountFromUsd(weth, usdAmount);
+        assertEq(expectedWeth, actualWeth);
+    }
+
      ////////////////////////////
     //Deposit Collateral test///
    ////////////////////////////
@@ -52,5 +77,29 @@ contract DUSDEngineTest is Test{
 
         vm.expectRevert(DUSDEngine.DUSDEngine__MustBeMoreThanZero.selector);
         dUSDEngine.depositCollateral(weth, 0);
+    }
+
+    function testRevertIfNotAllowedToken() public {
+        address erc20 = makeAddr("MockErc20");
+        vm.prank(USER);
+        vm.expectRevert(DUSDEngine.DUSDEngine__TokenNotAllowed.selector);
+        dUSDEngine.depositCollateral(erc20, 100);
+    }
+
+    modifier depositCollateral(){
+        vm.startPrank(USER);
+         ERC20Mock(weth).approve(address(dUSDEngine), AMOUNT_COLLATERAL);
+        dUSDEngine.depositCollateral(weth, AMOUNT_COLLATERAL);
+        dUSDEngine.getCollateralAmount(weth, USER);
+         vm.stopPrank();
+         _;
+    }
+
+    function testDepositCollateralShouldIncreaseTheCollateralOfUser() public depositCollateral{
+       (uint256 totalDUSDMinted, uint256 totalCollateralValueInUsd) = dUSDEngine.getAccountInformation(USER);
+       uint256 expectedTotalDUSDMinted = 0;
+       uint256 expectedTotalCollateralValue = dUSDEngine.getTokenAmountFromUsd(weth, totalCollateralValueInUsd);
+       assertEq(totalDUSDMinted, expectedTotalDUSDMinted);
+       assertEq(expectedTotalCollateralValue, AMOUNT_COLLATERAL);
     }
 }
