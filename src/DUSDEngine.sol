@@ -218,8 +218,8 @@ contract DUSDEngine is ReentrancyGuard {
         uint256 tokenAmountFromDebtRecovered = getTokenAmountFromUsd(tokenCollateralAddress, debtToRecover);
         uint256 bonusCollateral = (tokenAmountFromDebtRecovered * LIQUIDATION_BONUS) / LIQUIDATION_PRECISION;
         uint256 totalCollateralToRedeem = tokenAmountFromDebtRecovered + bonusCollateral;
-        _redeemCollateral(user, msg.sender, tokenCollateralAddress, totalCollateralToRedeem);
         _burnDUSD(user, msg.sender, debtToRecover);
+        _redeemCollateral(user, msg.sender, tokenCollateralAddress, totalCollateralToRedeem);
         uint256 endingUserHealthFactor = _healthFactor(user);
         if(endingUserHealthFactor<=startingUserHealthFactor){
             revert DUSDEngine__HealthFactorNotImproved();
@@ -227,7 +227,6 @@ contract DUSDEngine is ReentrancyGuard {
         _revertIfHealthFactorIsBroken(msg.sender);
     }
 
-    function getHealthFactor() external view {}
 
     //////Private Functions
 
@@ -275,8 +274,16 @@ contract DUSDEngine is ReentrancyGuard {
      */
     function _healthFactor(address user) private view returns (uint256) {
         (uint256 totalDUSDMinted, uint256 totalCollateralValue) = _getAccountInformation(user);
-        uint256 collateralAdjustedForThreshold = (totalCollateralValue * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
-        return (collateralAdjustedForThreshold * PRECISION) / totalDUSDMinted;
+        return _calculateHealthFactor(totalCollateralValue, totalDUSDMinted);
+    }
+
+
+    function _calculateHealthFactor(uint256 collateralValue, uint256 dUSDMinted) private pure returns (uint256){
+        uint256 collateralAdjustedForThreshold = (collateralValue * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
+        if(dUSDMinted<=0){
+            return type(uint256).max;
+        }
+        return (collateralAdjustedForThreshold * PRECISION) / dUSDMinted;
     }
 
     /**
@@ -322,5 +329,13 @@ contract DUSDEngine is ReentrancyGuard {
 
     function getAccountInformation(address user) external view returns(uint256 totalDUSDMinted, uint256 totalCollateralValue){
        (totalDUSDMinted, totalCollateralValue)= _getAccountInformation(user);
+    }
+
+    function getHealthFactor(address user) external view returns(uint256 healthFactor) {
+        healthFactor = _healthFactor(user);
+    }
+
+    function calculateHeathFactor(uint256 collateralValue, uint256 dUSDMinted) public pure returns(uint256){
+        return _calculateHealthFactor(collateralValue, dUSDMinted);
     }
 }
