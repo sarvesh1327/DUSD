@@ -327,6 +327,10 @@ contract DUSDEngine is ReentrancyGuard {
         return s_collateralDeposited[user][tokenCollateralAddress];
     }
 
+    function getCollatrealTokens() public view returns(address[] memory){
+        return s_collateralTokens;
+    }
+
     function getAccountInformation(address user) external view returns(uint256 totalDUSDMinted, uint256 totalCollateralValue){
        (totalDUSDMinted, totalCollateralValue)= _getAccountInformation(user);
     }
