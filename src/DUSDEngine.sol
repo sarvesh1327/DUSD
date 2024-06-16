@@ -29,6 +29,7 @@ import {DUSD} from "./DUSD.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+import {OracleLib} from "./libraries/OracleLib.sol";
 
 /**
  * @title DUSDEngine
@@ -59,6 +60,9 @@ contract DUSDEngine is ReentrancyGuard {
     error DUSDEngine__TransferFailed();
     error DUSDEngine__HealthFactorNotBroken();
     error DUSDEngine__HealthFactorNotImproved();
+
+    //// Types
+    using OracleLib for AggregatorV3Interface;
 
     //State Variables
     uint256 private constant ADDITIONAL_FEED_PRECISION = 1e10;
@@ -313,13 +317,13 @@ contract DUSDEngine is ReentrancyGuard {
 
     function getUsdValue(address tokenAddress, uint256 amount) public view returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[tokenAddress]);
-        (, int256 price,,,) = priceFeed.latestRoundData();
+        (, int256 price,,,) = priceFeed.staleCheckLatestRoundData();
         return ((uint256(price) * ADDITIONAL_FEED_PRECISION) * amount) / PRECISION;
     }
 
     function getTokenAmountFromUsd(address tokenAddress, uint256 usdAmountInWei) public view returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[tokenAddress]);
-        (, int256 price,,,) = priceFeed.latestRoundData();
+        (, int256 price,,,) = priceFeed.staleCheckLatestRoundData();
         return (usdAmountInWei * PRECISION) / (uint256(price) * ADDITIONAL_FEED_PRECISION);
     }
 
@@ -329,6 +333,10 @@ contract DUSDEngine is ReentrancyGuard {
 
     function getCollatrealTokens() public view returns(address[] memory){
         return s_collateralTokens;
+    }
+
+    function getCollateralTokenPriceFeed(address tokenAddress) public view returns(address){
+        return s_priceFeeds[tokenAddress];
     }
 
     function getAccountInformation(address user) external view returns(uint256 totalDUSDMinted, uint256 totalCollateralValue){
